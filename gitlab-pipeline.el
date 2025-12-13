@@ -32,7 +32,7 @@
 
 ;;; Code:
 
-(require 'glab)
+(require 'ghub)
 (require 'ansi-color)
 
 (defvar-local gitlab-pipeline-host "gitlab.com/api/v4"
@@ -71,11 +71,12 @@ Defaults to Ghub's default."
       (erase-buffer)
       (let ((pipelines) (pipeline) (pipeline_id)
             (jobs) (job) (job_id) (i 0) (j))
-        (setq pipelines (glab-get
-                         (format "/projects/%s/pipelines?sha=%s" project-id sha)
-                         nil
-                         :host host
-                         :auth gitlab-pipeline-ghub-auth-token))
+        (setq pipelines (ghub-request "GET"
+                    (format "/projects/%s/pipelines?sha=%s" project-id sha)
+                    nil
+                    :forge 'gitlab
+                    :host host
+                    :auth gitlab-pipeline-ghub-auth-token))
         (while (< i (length pipelines))
           (setq pipeline (elt pipelines i))
           (setq pipeline_id (cdr (assoc 'id pipeline)))
@@ -84,11 +85,12 @@ Defaults to Ghub's default."
                    (gitlab-pipeline--propertize-status (cdr (assoc 'status pipeline)))
                    pipeline_id
                    (cdr (assoc 'web_url pipeline))))
-          (setq jobs (glab-get
-                      (format "/projects/%s/pipelines/%s/jobs" project-id pipeline_id)
-                      nil
-                      :host host
-                      :auth gitlab-pipeline-ghub-auth-token))
+          (setq jobs (ghub-request "GET"
+                                    (format "/projects/%s/pipelines/%s/jobs" project-id pipeline_id)
+                                    nil
+                                    :forge 'gitlab
+                                    :host host
+                                    :auth gitlab-pipeline-ghub-auth-token))
           (setq j 0)
           (while (< j (length jobs))
             (setq job (elt jobs j))
@@ -116,18 +118,21 @@ Defaults to Ghub's default."
               "[^/@]+@\\|"
               "\\(?:ssh\\|ssh\\+git\\|git\\+ssh\\)://\\(?:[^/@]+@\\)?\\|"
               "https?://\\(?:[^/@]+@\\)?\\)"
-              "\\([^:]*\\)"
-              "\\(:[0-9]+\\)?"
-              "\\(?:/\\|:/?\\)"
-              "\\(.+?\\)"
+              "\\([^/:]+\\)"                ; host (match group 1) - no slashes or colons
+              "\\(:[0-9]+\\)?"              ; optional port (match group 2)
+              "\\(?:/\\|:/?\\)"             ; separator
+              "\\(.+?\\)"                   ; repo path (match group 3)
               "\\(?:\\.git\\|/\\)?\n\\'"))
 
 (defun gitlab-pipeline--split-url (url)
   "Return a list of '(host port repo) for a given path."
   (and (string-match gitlab-pipeline--url-regexp url)
+       (message "%s" (match-string 1 url))
        (list (match-string 1 url)
              (match-string 2 url)
-             (match-string 3 url))))
+             (string-trim-left (match-string 3 url) "/"))))
+
+;; (gitlab-pipeline--split-url "https://gitlab.com/neo-banking/test/service.git\n")
 
 (defun gitlab-pipeline--propertize-status (status)
   (let ((face (cdr
@@ -165,11 +170,18 @@ Defaults to Ghub's default."
          (host gitlab-pipeline-buffer-host))
     (when path
       (ignore-errors (kill-buffer (format "*Gitlab-CI:%s:%s" host path)))
-      (with-current-buffer (get-buffer-create (format "*Gitlab-CI:%s:%s" host path))
+        (with-current-buffer (get-buffer-create (format "*Gitlab-CI:%s:%s" host path))
         (erase-buffer)
-        (insert (cdr (car (glab-get path nil :host host :auth gitlab-pipeline-ghub-auth-token))))
+        (let ((trace-res (ghub-request "GET" path nil :forge 'gitlab :host host :auth gitlab-pipeline-ghub-auth-token)))
+          (cond
+           ((stringp trace-res)
+            (insert trace-res))
+           ((and (listp trace-res) (cdr (car trace-res)))
+            (insert (cdr (car trace-res)))
+           )))
         (goto-char (point-min))
-        (while (re-search-forward "" nil t)
+        (while (re-search-forward "
+" nil t)
           (replace-match "\n" nil nil))
         (ansi-color-apply-on-region (point-min) (point-max))
         (switch-to-buffer (current-buffer))
@@ -183,7 +195,7 @@ Defaults to Ghub's default."
          (path (format "%s/retry" jobpath))
          (host gitlab-pipeline-buffer-host))
     (when path
-      (glab-post path nil :host host :auth gitlab-pipeline-ghub-auth-token)
+      (ghub-request "POST" path nil :forge 'gitlab :host host :auth gitlab-pipeline-ghub-auth-token)
       (message "Done"))))
 
 ;;;###autoload
@@ -194,7 +206,7 @@ Defaults to Ghub's default."
          (path (format "%s/cancel" jobpath))
          (host gitlab-pipeline-buffer-host))
     (when path
-      (glab-post path nil :host host :auth gitlab-pipeline-ghub-auth-token)
+      (ghub-request "POST" path nil :forge 'gitlab :host host :auth gitlab-pipeline-ghub-auth-token)
       (message "Done"))))
 
 ;;; gitlab-pipeline.el ends here
